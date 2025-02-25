@@ -1,74 +1,111 @@
 #!/usr/bin/env bash
-
-# Exit immediately if a command exits with a non-zero status.
 set -e
 
+# Set noninteractive frontend for apt-get
+export DEBIAN_FRONTEND=noninteractive
+
+# Detect distribution (Debian or Ubuntu) and codename
+distro=$(lsb_release -is)
+codename=$(lsb_release -cs)
+if [ "$distro" = "Ubuntu" ]; then
+    DOCKER_REPO="https://download.docker.com/linux/ubuntu"
+else
+    DOCKER_REPO="https://download.docker.com/linux/debian"
+fi
+
+echo "Detected distribution: $distro ($codename)"
+echo "Using Docker repository: $DOCKER_REPO"
+
+# Update and upgrade the system
 echo "Updating and upgrading the system..."
 sudo apt-get update -y
 sudo apt-get upgrade -y
 
+# Create the vagrant user if it doesn't exist (optional)
+if ! id -u vagrant >/dev/null 2>&1; then
+    echo "Creating vagrant user..."
+    sudo adduser --quiet --disabled-password --gecos "" vagrant
+    # Optionally add passwordless sudo for vagrant (if not already set)
+    echo "vagrant ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/vagrant
+fi
+
+# Ensure vagrant has a home directory and proper permissions
+sudo mkdir -p /home/vagrant/.ssh
+sudo chown vagrant:vagrant /home/vagrant/.ssh
+sudo chmod 700 /home/vagrant/.ssh
+
+# (Optional) Place a public key for SSH access if needed
+# sudo curl -fsSL "https://raw.githubusercontent.com/hashicorp/vagrant/master/keys/vagrant.pub" -o /home/vagrant/.ssh/authorized_keys
+# sudo chown vagrant:vagrant /home/vagrant/.ssh/authorized_keys
+# sudo chmod 600 /home/vagrant/.ssh/authorized_keys
+
+# Install Git
 echo "Installing Git..."
 sudo apt-get install -y git
 
+# Install dependencies for Docker
 echo "Installing dependencies for Docker..."
-sudo apt-get install -y \
-    ca-certificates \
-    curl \
-    gnupg \
-    lsb-release
+sudo apt-get install -y ca-certificates curl gnupg lsb-release
 
-echo "Adding Docker’s official GPG key..."
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-  | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+# Add Docker's official GPG key
+echo "Adding Docker's official GPG key..."
+curl -fsSL "$DOCKER_REPO/gpg" | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
+# Set up the Docker stable repository
 echo "Setting up the Docker stable repository..."
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \
-  https://download.docker.com/linux/ubuntu \
-  $(lsb_release -cs) stable" \
-  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] $DOCKER_REPO $codename stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
+# Install Docker Engine
 echo "Installing Docker Engine..."
 sudo apt-get update -y
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 
-echo "Adding $USER to the docker group..."
-sudo usermod -aG docker "$USER"
+# Enable and start Docker service
+echo "Enabling and starting Docker..."
+sudo systemctl enable docker
+sudo systemctl start docker
 
+# Add both the current user and the vagrant user to the docker group
+echo "Adding users to the docker group..."
+sudo usermod -aG docker "$USER"
+sudo usermod -aG docker vagrant
+
+# Install Zsh
 echo "Installing Zsh..."
 sudo apt-get install -y zsh
 
-echo "Installing Oh My Zsh..."
-# The install script is interactive; we use '|| true' to allow the script to continue if it tries to exit.
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" || true
+# Install Oh My Zsh non-interactively for the vagrant user
+echo "Installing Oh My Zsh for vagrant user..."
+sudo -u vagrant sh -c 'RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"'
 
-ZSHRC_FILE="$HOME/.zshrc"
+# Update vagrant user's .zshrc to set the theme to dpoggi
+VAGRANT_ZSHRC="/home/vagrant/.zshrc"
+echo "Setting Oh My Zsh theme to dpoggi in $VAGRANT_ZSHRC..."
+sudo sed -i 's/^ZSH_THEME=".*"/ZSH_THEME="dpoggi"/g' "$VAGRANT_ZSHRC"
 
-echo "Setting Oh My Zsh theme to dpoggi in $ZSHRC_FILE..."
-sed -i 's/^ZSH_THEME=".*"/ZSH_THEME="dpoggi"/g' "$ZSHRC_FILE"
+# Ensure Zsh is the default shell for both the current user and vagrant
+echo "Setting Zsh as default shell for $USER and vagrant..."
+sudo chsh -s "$(which zsh)" "$USER"
+sudo chsh -s "$(which zsh)" vagrant
 
-echo "Ensuring Zsh is your default shell..."
-chsh -s "$(which zsh)" "$USER"
-
+# Install lazydocker
 echo "Installing lazydocker..."
-# 1) Grab the latest lazydocker version from the GitHub API
-# 2) Download the tarball for the Linux x86_64 build
-# 3) Extract and move to /usr/local/bin
 LAZYDOCKER_VERSION=$(curl --silent "https://api.github.com/repos/jesseduffield/lazydocker/releases/latest" \
-    | grep '"tag_name":' \
-    | sed -E 's/.*"([^"]+)".*/\1/')
-curl -Lo lazydocker.tar.gz \
-  "https://github.com/jesseduffield/lazydocker/releases/download/${LAZYDOCKER_VERSION}/lazydocker_${LAZYDOCKER_VERSION#v}_Linux_x86_64.tar.gz"
+    | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+curl -Lo lazydocker.tar.gz "https://github.com/jesseduffield/lazydocker/releases/download/${LAZYDOCKER_VERSION}/lazydocker_${LAZYDOCKER_VERSION#v}_Linux_x86_64.tar.gz"
 tar xzf lazydocker.tar.gz lazydocker
 sudo mv lazydocker /usr/local/bin/
 rm lazydocker.tar.gz
 
-echo "Creating alias 'lzd' -> 'lazydocker' in $ZSHRC_FILE..."
-echo "alias lzd='lazydocker'" >> "$ZSHRC_FILE"
+# Create alias 'lzd' for lazydocker in both .zshrc files
+echo "Creating alias 'lzd' -> 'lazydocker'..."
+echo "alias lzd='lazydocker'" | sudo tee -a "$VAGRANT_ZSHRC"
+echo "alias lzd='lazydocker'" >> "$HOME/.zshrc"
 
+# Source the current user's .zshrc (for immediate session use)
 echo "Sourcing your .zshrc to load the new configuration..."
-# If you’re still in bash, this might not fully apply; but it will run through the .zshrc commands once.
-source "$ZSHRC_FILE" || true
+source "$HOME/.zshrc" || true
 
-echo "Rebooting now..."
-sudo reboot
+echo "Setup complete. A reboot is recommended for all changes to take effect."
+# Optionally reboot the machine:
+# sudo reboot
