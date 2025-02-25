@@ -74,6 +74,10 @@ sudo usermod -aG docker vagrant
 echo "Installing Zsh..."
 sudo apt-get install -y zsh
 
+# Install Oh My Zsh non-interactively for the current user
+echo "Installing Oh My Zsh for current user..."
+sh -c 'RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"'
+
 # Install Oh My Zsh non-interactively for the vagrant user
 echo "Installing Oh My Zsh for vagrant user..."
 sudo -u vagrant sh -c 'RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"'
@@ -82,6 +86,7 @@ sudo -u vagrant sh -c 'RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh -c "$(curl -fsSL http
 VAGRANT_ZSHRC="/home/vagrant/.zshrc"
 echo "Setting Oh My Zsh theme to dpoggi in $VAGRANT_ZSHRC..."
 sudo sed -i 's/^ZSH_THEME=".*"/ZSH_THEME="dpoggi"/g' "$VAGRANT_ZSHRC"
+sed -i 's/^ZSH_THEME=".*"/ZSH_THEME="dpoggi"/g' "$HOME/.zshrc"
 
 # Ensure Zsh is the default shell for both the current user and vagrant
 echo "Setting Zsh as default shell for $USER and vagrant..."
@@ -102,9 +107,13 @@ echo "Creating alias 'lzd' -> 'lazydocker'..."
 echo "alias lzd='lazydocker'" | sudo tee -a "$VAGRANT_ZSHRC"
 echo "alias lzd='lazydocker'" >> "$HOME/.zshrc"
 
-# Source the current user's .zshrc (for immediate session use)
-echo "Sourcing your .zshrc to load the new configuration..."
-source "$HOME/.zshrc" || true
+# Attempt to source the current user's .zshrc if we're already in a zsh session
+if [ -n "$ZSH_VERSION" ]; then
+    echo "Sourcing your .zshrc to load the new configuration..."
+    source "$HOME/.zshrc"
+else
+    echo "Current shell is not zsh; please run 'exec zsh' to use your new configuration."
+fi
 
 echo "Setup complete. A reboot is recommended for all changes to take effect."
 # Optionally reboot the machine:
